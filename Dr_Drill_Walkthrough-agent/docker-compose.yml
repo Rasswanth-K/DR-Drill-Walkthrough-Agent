@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # Main Full-stack App Container
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dr-drill-agent:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://sre_admin:SecureAuditPass99@postgres-primary:5432/dr_primary_db
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - postgres-primary
+      - postgres-backup
+      - postgres-audit
+      - redis
+    restart: always
+
+  # Primary Database Container (Active Production)
+  postgres-primary:
+    image: postgres:16-alpine
+    container_name: postgres-primary
+    environment:
+      - POSTGRES_USER=sre_admin
+      - POSTGRES_PASSWORD=SecureAuditPass99
+      - POSTGRES_DB=dr_primary_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_primary:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sre_admin -d dr_primary_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # Backup Database Container (Standby DR replica)
+  postgres-backup:
+    image: postgres:16-alpine
+    container_name: postgres-backup
+    environment:
+      - POSTGRES_USER=sre_admin
+      - POSTGRES_PASSWORD=SecureAuditPass99
+      - POSTGRES_DB=dr_backup_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_backup:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sre_admin -d dr_backup_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # Audit Database Container (Execution history logs)
+  postgres-audit:
+    image: postgres:16-alpine
+    container_name: postgres-audit
+    environment:
+      - POSTGRES_USER=sre_admin
+      - POSTGRES_PASSWORD=SecureAuditPass99
+      - POSTGRES_DB=dr_audit_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata_audit:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sre_admin -d dr_audit_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # Redis Layer for Rate Limiting & Caching
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass RedisSecureLimitP@ss
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: always
+
+  # Prometheus Monitoring SCRAPER
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+    restart: always
+
+  # Grafana Dashboard Visualization Panel
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3100:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=sre_grafana_pass
+    restart: always
+
+volumes:
+  pgdata_primary:
+  pgdata_backup:
+  pgdata_audit:
+  redisdata:
